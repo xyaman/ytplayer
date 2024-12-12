@@ -3,6 +3,8 @@ const c = @cImport({
     @cInclude("portaudio.h");
 });
 
+const clap = @import("clap");
+
 const yt = @import("youtube.zig");
 const Audio = @import("audio.zig").Audio;
 
@@ -19,13 +21,39 @@ fn sigintHandler(sig: c_int) callconv(.C) void {
 }
 
 pub fn main() !void {
-    var args = std.process.args();
-    const exe = args.next().?;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    const url = args.next() orelse {
-        std.log.err("You need to specify an url\nEx: {s} 'https://www.youtube.com/watch?v=HRlW6yZo6Kc'", .{exe});
-        std.process.exit(1);
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help             Display this help and exit.
+        \\-s, --search <str>     Search tracks by query.
+        \\<str>                  Youtube url
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
     };
+    defer res.deinit();
+
+    if (res.args.help != 0) {
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+    }
+
+    var url: []const u8 = undefined;
+
+    if (res.positionals[0]) |pos| {
+        url = pos;
+    } else {
+        const stderr = std.io.getStdErr().writer();
+        try stderr.print("You need to specify an url\nUSAGE:\n", .{});
+        return clap.help(stderr, clap.Help, &params, .{});
+    }
 
     // start of program
     std.posix.sigaction(std.posix.SIG.INT, &std.posix.Sigaction{
@@ -33,9 +61,6 @@ pub fn main() !void {
         .mask = std.posix.empty_sigset,
         .flags = 0,
     }, null);
-
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
 
     var audio = try Audio.init(CHANNELS, SAMPLE_RATE, BUFFER_SIZE);
     defer audio.deinit();
