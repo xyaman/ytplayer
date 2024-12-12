@@ -1,0 +1,7 @@
+# zig
+zig-out
+.zig-cache
+
+# debug logs
+ffmpeg.out
+yt-dlp.out

@@ -1,0 +1,17 @@
+.{
+    .name = "ytplayer",
+    .version = "0.0.1",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+    .dependencies = .{
+        .portaudio = .{
+            .url = "git+https://github.com/allyourcodebase/portaudio#5beb53da11a9fcd01cb5f30f0375c845f0acc4be",
+            .hash = "1220e96c59de285fea5b44374713c6c0e56ce7dbd2deca72e97c6c5420865e4fad53",
+        },
+    },
+}
