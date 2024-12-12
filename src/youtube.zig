@@ -1,18 +1,49 @@
 const std = @import("std");
 
-const TrackInfo = struct {
-    id: []u8,
+pub const TrackInfo = struct {
+    url: []u8,
     title: []u8,
     duration: []u8,
 
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: @This()) void {
-        self.allocator.free(self.id);
+        self.allocator.free(self.url);
         self.allocator.free(self.title);
         self.allocator.free(self.duration);
     }
 };
+
+// BUG: we are allocating the whole buffer. maybe??
+fn parseTrack(info: *TrackInfo, allocator: std.mem.Allocator, buffer: []const u8) !void {
+
+    if (buffer.len == 0) return;
+
+    switch (buffer[0]) {
+        'I' => {
+            const base_url = "https://youtube.com/watch?v=";
+            const url = try allocator.alloc(u8, base_url.len + buffer[1..].len);
+            info.url = url;
+            var pos: usize = 0;
+            for (base_url) |ch| {
+                url[pos] = ch;
+                pos += 1;
+            }
+            for (buffer[1..]) |ch| {
+                url[pos] = ch;
+                pos += 1;
+            }
+        },
+        'T' => {
+            info.title = try allocator.dupe(u8, buffer[1..]);
+        },
+        'D' => {
+            info.duration = try allocator.dupe(u8, buffer[1..]);
+        },
+
+        else => {},
+    }
+}
 
 fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
     var child = std.process.Child.init(&.{
@@ -38,7 +69,7 @@ fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
     defer buffer.deinit();
 
     var info = TrackInfo{
-        .id = "",
+        .url = "",
         .allocator = allocator,
         .title = "",
         .duration = "",
@@ -46,26 +77,64 @@ fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
 
     while (child.stdout.?.reader().streamUntilDelimiter(buffer.writer(), '\n', null)) {
         defer buffer.clearRetainingCapacity();
-
-        switch (buffer.items[0]) {
-            'I' => {
-                info.id = try allocator.dupe(u8, buffer.items[1..]);
-            },
-            'T' => {
-                info.title = try allocator.dupe(u8, buffer.items[1..]);
-            },
-            'D' => {
-                info.duration = try allocator.dupe(u8, buffer.items[1..]);
-            },
-
-            else => {},
-        }
+        try parseTrack(&info, allocator, buffer.items);
     } else |err| switch (err) {
         error.EndOfStream => {},
         else => return err,
     }
 
     return info;
+}
+
+pub fn search(allocator: std.mem.Allocator, query: []const u8, _: usize) !std.ArrayList(TrackInfo) {
+    var buf: [32]u8 = undefined;
+
+    var child = std.process.Child.init(&.{
+        "yt-dlp",
+        "--print",
+        "I%(id)s\tT%(title)s\tD%(duration_string)s",
+        try std.fmt.bufPrint(&buf, "ytsearch20:{s}", .{query}),
+        "--no-download",
+        "--skip-download",
+        "--quiet",
+        "--ignore-errors",
+        "--flat-playlist",
+    }, allocator);
+
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Ignore;
+    child.stdin_behavior = .Close;
+
+    try child.spawn();
+    defer _ = child.kill() catch {};
+
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+
+    var res = try std.ArrayList(TrackInfo).initCapacity(allocator, 20);
+
+    while (child.stdout.?.reader().streamUntilDelimiter(buffer.writer(), '\n', null)) {
+        defer buffer.clearRetainingCapacity();
+        var info = TrackInfo{
+            .url = "",
+            .allocator = allocator,
+            .title = "",
+            .duration = "",
+        };
+
+        // line
+        var iter = std.mem.splitAny(u8, buffer.items, "\t");
+        while (iter.next()) |e| {
+            try parseTrack(&info, allocator, e);
+        }
+
+        try res.append(info);
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
+    }
+
+    return res;
 }
 
 pub const YTDLStream = struct {
@@ -109,12 +178,14 @@ pub const YTDLStream = struct {
         try self.child.spawn();
         self.stdout = self.child.stdout.?;
 
+        std.log.info("url: {s}", .{url});
+
         self.current_track = try getTrackInfo(self.allocator, url);
-        const id = self.current_track.?.id;
+        const id = self.current_track.?.url;
         const title = self.current_track.?.title;
         const duration = self.current_track.?.duration;
 
-        std.log.info("Playing: (?v={s}) {s} - {s}", .{id, title, duration});
+        std.log.info("Playing: (?v={s}) {s} - {s}", .{ id, title, duration });
     }
 
     pub fn stop(self: *@This()) void {

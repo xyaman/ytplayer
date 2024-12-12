@@ -46,13 +46,51 @@ pub fn main() !void {
     }
 
     var url: []const u8 = undefined;
+    var tracks: ?std.ArrayList(yt.TrackInfo) = null;
+    defer if (tracks) |t| t.deinit();
+    // de-allocation
+    defer {
+        if (tracks) |t| {
+            for (t.items) |track| {
+                track.deinit();
+            }
+        }
+    }
 
-    if (res.positionals[0]) |pos| {
-        url = pos;
-    } else {
-        const stderr = std.io.getStdErr().writer();
-        try stderr.print("You need to specify an url\nUSAGE:\n", .{});
-        return clap.help(stderr, clap.Help, &params, .{});
+    if (res.args.search) |query| {
+        tracks = try yt.search(allocator, query, 20);
+        const stdout = std.io.getStdOut().writer();
+        for (tracks.?.items, 1..) |track, i| {
+            try stdout.print("[{d}] {s}\n", .{ i, track.title });
+        }
+
+        try stdout.print("Select a number (1-{d}): ", .{tracks.?.items.len});
+
+        // read input
+        const stdin = std.io.getStdIn().reader();
+        var buf: std.BoundedArray(u8, 3) = .{};
+        stdin.streamUntilDelimiter(buf.writer(), '\n', null) catch |err| switch (err) {
+            error.EndOfStream => {},
+            else => return error.InvalidInput,
+        };
+
+        // parse number and select track
+        const id = std.fmt.parseInt(u8, buf.slice(), 10) catch return error.NaN;
+        if (id >= tracks.?.items.len or id <= 0) {
+            return error.InvalidNumber;
+        }
+
+        url = tracks.?.items[id - 1].url;
+    }
+
+    if (tracks == null) {
+        if (res.positionals[0]) |pos| {
+            url = pos;
+        } else {
+            const stderr = std.io.getStdErr().writer();
+            try stderr.print("You need to specify an url\nUSAGE:\n", .{});
+            return clap.help(stderr, clap.Help, &params, .{});
+        }
     }
 
     // start of program
