@@ -26,6 +26,7 @@ fn parseTrack(info: *TrackInfo, buffer: []const u8) !void {
     }
 }
 
+/// This function will also free the memory
 fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
     var child = std.process.Child.init(&.{
         "yt-dlp",
@@ -40,7 +41,7 @@ fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
     }, allocator);
 
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    child.stderr_behavior = .Close;
     child.stdin_behavior = .Close;
 
     try child.spawn();
@@ -83,7 +84,7 @@ pub fn search(allocator: std.mem.Allocator, query: []const u8, n: usize) ![]Trac
     }, allocator);
 
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    child.stderr_behavior = .Close;
     child.stdin_behavior = .Close;
 
     try child.spawn();
@@ -141,8 +142,14 @@ pub const Youtube = struct {
         };
     }
 
-    pub fn play_from_track() void {}
-    pub fn play_from_url() void {}
+    pub fn playFromTrack(self: *@This(), track: TrackInfo) !void {
+        self.current_track = track;
+        try self.play(&track.url);
+    }
+    pub fn playFromUrl(self: *@This(), url: []const u8) !void {
+        self.current_track = try getTrackInfo(self.allocator, url);
+        try self.play(url);
+    }
 
     pub fn play(self: *@This(), url: []const u8) !void {
 
@@ -160,13 +167,9 @@ pub const Youtube = struct {
         try self.child.spawn();
         self.stdout = self.child.stdout.?;
 
-        std.log.info("url: {s}", .{url});
-
-        self.current_track = try getTrackInfo(self.allocator, url);
         const id = self.current_track.?.url;
         const title = self.current_track.?.title;
         const duration = self.current_track.?.duration;
-
         std.log.info("Playing: ({s}) {s} - {s}", .{ id, title, duration });
     }
 

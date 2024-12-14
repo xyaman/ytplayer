@@ -47,17 +47,18 @@ pub fn main() !void {
     }
 
     var url: []const u8 = undefined;
-    var tracks: ?[]yt.TrackInfo = null;
-    defer if (tracks) |t| allocator.free(t);
+    var track: ?yt.TrackInfo = null;
 
     if (res.args.search) |query| {
-        tracks = try yt.search(allocator, query, 20);
+        const tracks = try yt.search(allocator, query, 20);
+        defer allocator.free(tracks);
+
         const stdout = std.io.getStdOut().writer();
-        for (tracks.?, 1..) |track, i| {
-            try stdout.print("[{d}] {s}\n", .{ i, track.title });
+        for (tracks, 1..) |t, i| {
+            try stdout.print("[{d}] {s}\n", .{ i, t.title });
         }
 
-        try stdout.print("Select a number (1-{d}): ", .{tracks.?.len});
+        try stdout.print("Select a number (1-{d}): ", .{tracks.len});
 
         // read input
         const stdin = std.io.getStdIn().reader();
@@ -69,14 +70,13 @@ pub fn main() !void {
 
         // parse number and select track
         const id = std.fmt.parseInt(u8, buf.slice(), 10) catch return error.NaN;
-        if (id >= tracks.?.len or id <= 0) {
+        if (id >= tracks.len or id <= 0) {
             return error.InvalidNumber;
         }
-
-        url = &tracks.?[id - 1].url;
+        track = tracks[id - 1];
     }
 
-    if (tracks == null) {
+    if (track == null) {
         if (res.positionals[0]) |pos| {
             url = pos;
         } else {
@@ -99,7 +99,8 @@ pub fn main() !void {
     var yt_stream = Youtube.init(allocator, CHANNELS, SAMPLE_RATE);
     defer yt_stream.deinit();
 
-    try yt_stream.play(url);
+    if (track) |t| try yt_stream.playFromTrack(t)
+    else try yt_stream.playFromUrl(url);
 
     var buffer: [BUFFER_SIZE * CHANNELS * @sizeOf(f32)]f32 = undefined;
     while (should_run) {
