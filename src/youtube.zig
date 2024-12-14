@@ -1,46 +1,27 @@
 const std = @import("std");
 
 pub const TrackInfo = struct {
-    url: []u8,
-    title: []u8,
-    duration: []u8,
-
-    allocator: std.mem.Allocator,
-
-    pub fn deinit(self: @This()) void {
-        self.allocator.free(self.url);
-        self.allocator.free(self.title);
-        self.allocator.free(self.duration);
-    }
+    url: [64]u8,
+    title: [128]u8,
+    duration: [16]u8,
 };
 
-// BUG: we are allocating the whole buffer. maybe??
-fn parseTrack(info: *TrackInfo, allocator: std.mem.Allocator, buffer: []const u8) !void {
-
+fn parseTrack(info: *TrackInfo, buffer: []const u8) !void {
     if (buffer.len == 0) return;
 
     switch (buffer[0]) {
         'I' => {
-            const base_url = "https://youtube.com/watch?v=";
-            const url = try allocator.alloc(u8, base_url.len + buffer[1..].len);
-            info.url = url;
-            var pos: usize = 0;
-            for (base_url) |ch| {
-                url[pos] = ch;
-                pos += 1;
-            }
-            for (buffer[1..]) |ch| {
-                url[pos] = ch;
-                pos += 1;
-            }
+            if (buffer.len > info.url.len) return error.TrackIndexTooLong;
+            _ = try std.fmt.bufPrint(&info.url, "https://youtube.com/watch?v={s}", .{buffer[1..]});
         },
         'T' => {
-            info.title = try allocator.dupe(u8, buffer[1..]);
-        },
+            if (buffer.len > info.title.len) return error.TrackTitleTooLong;
+            @memcpy(info.title[0..buffer.len - 1], buffer[1..]);
+        }, 
         'D' => {
-            info.duration = try allocator.dupe(u8, buffer[1..]);
+            if (buffer.len > info.duration.len) return error.TrackDurationTooLong;
+            @memcpy(info.duration[0..buffer.len - 1], buffer[1..]);
         },
-
         else => {},
     }
 }
@@ -69,15 +50,14 @@ fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
     defer buffer.deinit();
 
     var info = TrackInfo{
-        .url = "",
-        .allocator = allocator,
-        .title = "",
-        .duration = "",
+        .url = undefined,
+        .title = undefined,
+        .duration = undefined,
     };
 
     while (child.stdout.?.reader().streamUntilDelimiter(buffer.writer(), '\n', null)) {
         defer buffer.clearRetainingCapacity();
-        try parseTrack(&info, allocator, buffer.items);
+        try parseTrack(&info, buffer.items);
     } else |err| switch (err) {
         error.EndOfStream => {},
         else => return err,
@@ -86,14 +66,15 @@ fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
     return info;
 }
 
-pub fn search(allocator: std.mem.Allocator, query: []const u8, _: usize) !std.ArrayList(TrackInfo) {
-    var buf: [32]u8 = undefined;
+/// The caller is responsible of freeing the pointer
+pub fn search(allocator: std.mem.Allocator, query: []const u8, n: usize) ![]TrackInfo {
+    var searchbuf: [32]u8 = undefined;
 
     var child = std.process.Child.init(&.{
         "yt-dlp",
         "--print",
         "I%(id)s\tT%(title)s\tD%(duration_string)s",
-        try std.fmt.bufPrint(&buf, "ytsearch20:{s}", .{query}),
+        try std.fmt.bufPrint(&searchbuf, "ytsearch{d}:{s}", .{ n, query }),
         "--no-download",
         "--skip-download",
         "--quiet",
@@ -111,24 +92,24 @@ pub fn search(allocator: std.mem.Allocator, query: []const u8, _: usize) !std.Ar
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
-    var res = try std.ArrayList(TrackInfo).initCapacity(allocator, 20);
+    var res = try allocator.alloc(TrackInfo, n);
 
-    while (child.stdout.?.reader().streamUntilDelimiter(buffer.writer(), '\n', null)) {
+    var i: usize = 0;
+    while (child.stdout.?.reader().streamUntilDelimiter(buffer.writer(), '\n', null)) : (i += 1) {
         defer buffer.clearRetainingCapacity();
         var info = TrackInfo{
-            .url = "",
-            .allocator = allocator,
-            .title = "",
-            .duration = "",
+            .url = undefined,
+            .title = undefined,
+            .duration = undefined,
         };
 
         // line
         var iter = std.mem.splitAny(u8, buffer.items, "\t");
         while (iter.next()) |e| {
-            try parseTrack(&info, allocator, e);
+            try parseTrack(&info, e);
         }
 
-        try res.append(info);
+        res[i] = info;
     } else |err| switch (err) {
         error.EndOfStream => {},
         else => return err,
@@ -160,10 +141,10 @@ pub const Youtube = struct {
         };
     }
 
+    pub fn play_from_track() void {}
+    pub fn play_from_url() void {}
+
     pub fn play(self: *@This(), url: []const u8) !void {
-        if (self.current_track) |current_track| {
-            current_track.deinit();
-        }
 
         // const command = [_][]const u8{ "sh", "-c", std.fmt.comptimePrint("yt-dlp -o - {s}  2> yt-dlp.out | ffmpeg -i pipe:0 -ac {d} -ar {d} -f u8 pipe:1 2> /dev/null", .{ url, CHANNELS, SAMPLE_RATE }) };
         // TODO: consider using heap instead of stack
@@ -186,7 +167,7 @@ pub const Youtube = struct {
         const title = self.current_track.?.title;
         const duration = self.current_track.?.duration;
 
-        std.log.info("Playing: (?v={s}) {s} - {s}", .{ id, title, duration });
+        std.log.info("Playing: ({s}) {s} - {s}", .{ id, title, duration });
     }
 
     pub fn stop(self: *@This()) void {
@@ -196,6 +177,5 @@ pub const Youtube = struct {
 
     pub fn deinit(self: *Youtube) void {
         _ = self.child.kill() catch {};
-        if (self.current_track) |track| track.deinit();
     }
 };
