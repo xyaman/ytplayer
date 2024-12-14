@@ -6,6 +6,7 @@ const c = @cImport({
 const clap = @import("clap");
 
 const yt = @import("youtube.zig");
+const Youtube = yt.Youtube;
 const Audio = @import("audio.zig").Audio;
 
 const SAMPLE_RATE = 44100;
@@ -103,7 +104,7 @@ pub fn main() !void {
     var audio = try Audio.init(CHANNELS, SAMPLE_RATE, BUFFER_SIZE);
     defer audio.deinit();
 
-    var yt_stream = yt.YTDLStream.init(allocator, CHANNELS, SAMPLE_RATE);
+    var yt_stream = Youtube.init(allocator, CHANNELS, SAMPLE_RATE);
     defer yt_stream.deinit();
 
     try yt_stream.play(url);

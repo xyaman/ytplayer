@@ -137,7 +137,7 @@ pub fn search(allocator: std.mem.Allocator, query: []const u8, _: usize) !std.Ar
     return res;
 }
 
-pub const YTDLStream = struct {
+pub const Youtube = struct {
     allocator: std.mem.Allocator,
     child: std.process.Child,
     stdout: std.fs.File,
@@ -145,10 +145,11 @@ pub const YTDLStream = struct {
     channels: usize,
     sample_rate: usize,
 
+    // we need to deallocate this always
     current_track: ?TrackInfo,
 
     /// Must call `YTDL.deinit()`
-    pub fn init(allocator: std.mem.Allocator, channels: usize, sample_rate: usize) YTDLStream {
+    pub fn init(allocator: std.mem.Allocator, channels: usize, sample_rate: usize) Youtube {
         return .{
             .allocator = allocator,
             .child = undefined,
@@ -193,7 +194,7 @@ pub const YTDLStream = struct {
         self.current_track = null;
     }
 
-    pub fn deinit(self: *YTDLStream) void {
+    pub fn deinit(self: *Youtube) void {
         _ = self.child.kill() catch {};
         if (self.current_track) |track| track.deinit();
     }
