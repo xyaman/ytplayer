@@ -55,7 +55,7 @@ pub fn main() !void {
 
         const stdout = std.io.getStdOut().writer();
         for (tracks, 1..) |t, i| {
-            try stdout.print("[{d}] {s}\n", .{ i, t.title });
+            try stdout.print("[{d}] {s}\n", .{ i, t.title.slice() });
         }
 
         try stdout.print("Select a number (1-{d}): ", .{tracks.len});
@@ -99,8 +99,11 @@ pub fn main() !void {
     var yt_stream = Youtube.init(allocator, CHANNELS, SAMPLE_RATE);
     defer yt_stream.deinit();
 
-    if (track) |t| try yt_stream.playFromTrack(t)
-    else try yt_stream.playFromUrl(url);
+    if (track) |t| {
+        try yt_stream.playFromTrack(t);
+    } else {
+        try yt_stream.playFromUrl(url);
+    }
 
     var buffer: [BUFFER_SIZE * CHANNELS * @sizeOf(f32)]f32 = undefined;
     while (should_run) {

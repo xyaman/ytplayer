@@ -1,9 +1,9 @@
 const std = @import("std");
 
 pub const TrackInfo = struct {
-    url: [64]u8,
-    title: [128]u8,
-    duration: [16]u8,
+    url: std.BoundedArray(u8, 64),
+    title: std.BoundedArray(u8, 256),
+    duration: std.BoundedArray(u8, 16),
 };
 
 fn parseTrack(info: *TrackInfo, buffer: []const u8) !void {
@@ -11,16 +11,17 @@ fn parseTrack(info: *TrackInfo, buffer: []const u8) !void {
 
     switch (buffer[0]) {
         'I' => {
-            if (buffer.len > info.url.len) return error.TrackIndexTooLong;
-            _ = try std.fmt.bufPrint(&info.url, "https://youtube.com/watch?v={s}", .{buffer[1..]});
+            if (buffer.len > 64) return error.TrackIndexTooLong;
+            info.url = try std.BoundedArray(u8, 64).fromSlice(buffer[1..]);
+            
         },
         'T' => {
-            if (buffer.len > info.title.len) return error.TrackTitleTooLong;
-            @memcpy(info.title[0..buffer.len - 1], buffer[1..]);
-        }, 
+            if (buffer.len > 256) return error.TrackTitleTooLong;
+            info.title = try std.BoundedArray(u8, 256).fromSlice(buffer[1..]);
+        },
         'D' => {
-            if (buffer.len > info.duration.len) return error.TrackDurationTooLong;
-            @memcpy(info.duration[0..buffer.len - 1], buffer[1..]);
+            if (buffer.len > 16) return error.TrackDurationTooLong;
+            info.duration = try std.BoundedArray(u8, 16).fromSlice(buffer[1..]);
         },
         else => {},
     }
@@ -69,7 +70,7 @@ fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
 
 /// The caller is responsible of freeing the pointer
 pub fn search(allocator: std.mem.Allocator, query: []const u8, n: usize) ![]TrackInfo {
-    var searchbuf: [32]u8 = undefined;
+    var searchbuf: [512]u8 = undefined;
 
     var child = std.process.Child.init(&.{
         "yt-dlp",
@@ -144,14 +145,14 @@ pub const Youtube = struct {
 
     pub fn playFromTrack(self: *@This(), track: TrackInfo) !void {
         self.current_track = track;
-        try self.play(&track.url);
+        try self.play(track.url.slice());
     }
     pub fn playFromUrl(self: *@This(), url: []const u8) !void {
         self.current_track = try getTrackInfo(self.allocator, url);
         try self.play(url);
     }
 
-    pub fn play(self: *@This(), url: []const u8) !void {
+    fn play(self: *@This(), url: []const u8) !void {
 
         // const command = [_][]const u8{ "sh", "-c", std.fmt.comptimePrint("yt-dlp -o - {s}  2> yt-dlp.out | ffmpeg -i pipe:0 -ac {d} -ar {d} -f u8 pipe:1 2> /dev/null", .{ url, CHANNELS, SAMPLE_RATE }) };
         // TODO: consider using heap instead of stack
@@ -160,16 +161,16 @@ pub const Youtube = struct {
         const command = [_][]const u8{ "sh", "-c", cmd_print };
 
         self.child = std.process.Child.init(&command, self.allocator);
-        self.child.stdin_behavior = .Close;
-        self.child.stderr_behavior = .Close;
+        self.child.stdin_behavior = .Ignore;
         self.child.stdout_behavior = .Pipe;
+        self.child.stderr_behavior = .Ignore;
 
         try self.child.spawn();
         self.stdout = self.child.stdout.?;
 
-        const id = self.current_track.?.url;
-        const title = self.current_track.?.title;
-        const duration = self.current_track.?.duration;
+        const id = self.current_track.?.url.slice();
+        const title = self.current_track.?.title.slice();
+        const duration = self.current_track.?.duration.slice();
         std.log.info("Playing: ({s}) {s} - {s}", .{ id, title, duration });
     }
 
