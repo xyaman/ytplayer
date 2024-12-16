@@ -1,4 +1,9 @@
 const std = @import("std");
+const audio = @import("audio.zig");
+
+const SAMPLE_RATE = 44100;
+const BUFFER_SIZE = 2048;
+const CHANNELS = 2;
 
 pub const TrackInfo = struct {
     url: std.BoundedArray(u8, 64),
@@ -13,7 +18,6 @@ fn parseTrack(info: *TrackInfo, buffer: []const u8) !void {
         'I' => {
             if (buffer.len > 64) return error.TrackIndexTooLong;
             info.url = try std.BoundedArray(u8, 64).fromSlice(buffer[1..]);
-            
         },
         'T' => {
             if (buffer.len > 256) return error.TrackTitleTooLong;
@@ -120,33 +124,66 @@ pub fn search(allocator: std.mem.Allocator, query: []const u8, n: usize) ![]Trac
     return res;
 }
 
+fn writeAudioFn(self: *Youtube) !void {
+    var buffer: [BUFFER_SIZE * CHANNELS * @sizeOf(f32)]f32 = undefined;
+    while (true) {
+        if (self.child == null) break;
+        if (self.stream_should_stop.load(.seq_cst)) break;
+
+        const bytes_read = try self.child.?.stdout.?.read(std.mem.sliceAsBytes(&buffer));
+        if (bytes_read == 0) break;
+        self.audio.write(f32, &buffer, bytes_read / (CHANNELS * @sizeOf(f32))) catch {};
+    }
+
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    if (self.child) |*c| _ = try c.kill();
+}
+
 pub const Youtube = struct {
     allocator: std.mem.Allocator,
-    child: std.process.Child,
-    stdout: std.fs.File,
+    child: ?std.process.Child,
+
+    audio: audio.Audio,
+    stream_th: ?std.Thread,
+    mutex: std.Thread.Mutex,
+    stream_should_stop: std.atomic.Value(bool),
 
     channels: usize,
     sample_rate: usize,
+    buffer_size: usize,
 
-    // we need to deallocate this always
     current_track: ?TrackInfo,
 
     /// Must call `YTDL.deinit()`
-    pub fn init(allocator: std.mem.Allocator, channels: usize, sample_rate: usize) Youtube {
+    pub fn init(allocator: std.mem.Allocator, channels: usize, sample_rate: usize, buffer_size: usize) !Youtube {
         return .{
             .allocator = allocator,
-            .child = undefined,
-            .stdout = undefined,
+            .child = null,
+            .audio = try audio.Audio.init(channels, sample_rate, buffer_size),
+            .stream_th = null,
+            .mutex = .{},
+            .stream_should_stop = std.atomic.Value(bool).init(false),
+
             .channels = channels,
             .sample_rate = sample_rate,
+            .buffer_size = buffer_size,
             .current_track = null,
         };
+    }
+
+    pub fn deinit(self: *Youtube) void {
+        if (self.child) |*c| {
+            _ = c.kill() catch {};
+        }
+        self.audio.deinit();
     }
 
     pub fn playFromTrack(self: *@This(), track: TrackInfo) !void {
         self.current_track = track;
         try self.play(track.url.slice());
     }
+
     pub fn playFromUrl(self: *@This(), url: []const u8) !void {
         self.current_track = try getTrackInfo(self.allocator, url);
         try self.play(url);
@@ -154,32 +191,39 @@ pub const Youtube = struct {
 
     fn play(self: *@This(), url: []const u8) !void {
 
+        if (self.child) |*c| {
+            _ = try c.kill();
+        }
         // const command = [_][]const u8{ "sh", "-c", std.fmt.comptimePrint("yt-dlp -o - {s}  2> yt-dlp.out | ffmpeg -i pipe:0 -ac {d} -ar {d} -f u8 pipe:1 2> /dev/null", .{ url, CHANNELS, SAMPLE_RATE }) };
         // TODO: consider using heap instead of stack
         var cmd_buffer: [2048]u8 = undefined;
         const cmd_print = try std.fmt.bufPrint(&cmd_buffer, "yt-dlp --quiet --ignore-errors --flat-playlist -o - {s}  2> yt-dlp.out | ffmpeg -i pipe:0 -vn -ac {d} -ar {d} -f f32le pipe:1 2> ffmpeg.out", .{ url, self.channels, self.sample_rate });
         const command = [_][]const u8{ "sh", "-c", cmd_print };
 
+        self.stream_should_stop.store(true, .seq_cst);
+        if (self.stream_th) |th| {
+            th.join();
+            self.stream_th = null;
+        }
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.child = std.process.Child.init(&command, self.allocator);
-        self.child.stdin_behavior = .Ignore;
-        self.child.stdout_behavior = .Pipe;
-        self.child.stderr_behavior = .Ignore;
+        self.child.?.stdin_behavior = .Ignore;
+        self.child.?.stdout_behavior = .Pipe;
+        self.child.?.stderr_behavior = .Ignore;
+        try self.child.?.spawn();
 
-        try self.child.spawn();
-        self.stdout = self.child.stdout.?;
-
-        const id = self.current_track.?.url.slice();
-        const title = self.current_track.?.title.slice();
-        const duration = self.current_track.?.duration.slice();
-        std.log.info("Playing: ({s}) {s} - {s}", .{ id, title, duration });
+        if (self.stream_th == null) {
+            self.stream_should_stop.store(false, .seq_cst);
+            self.stream_th = try std.Thread.spawn(.{}, writeAudioFn, .{self});
+        }
     }
 
     pub fn stop(self: *@This()) void {
-        _ = self.child.kill() catch {};
+        if (self.child) |*c| {
+            _ = c.kill() catch {};
+        }
         self.current_track = null;
-    }
-
-    pub fn deinit(self: *Youtube) void {
-        _ = self.child.kill() catch {};
     }
 };

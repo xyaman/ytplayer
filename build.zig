@@ -16,6 +16,9 @@ pub fn build(b: *std.Build) void {
     const clap_dep = b.dependency("clap", .{});
     exe.root_module.addImport("clap", clap_dep.module("clap"));
 
+    const mibu_dep = b.dependency("mibu", .{});
+    exe.root_module.addImport("mibu", mibu_dep.module("mibu"));
+
     const pa_c_dep = b.dependency("portaudio", .{
         .target = target,
         .optimize = optimize,
