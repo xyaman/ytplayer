@@ -6,9 +6,8 @@ const c = @cImport({
 pub const Audio = struct {
     stream: ?*c.PaStream,
     pa_err: c.PaError,
-    channels: c_int,
 
-    pub fn init(channels: c_int, sample_rate: f64, buffer_size: c_ulong) !Audio {
+    pub fn init(channels: usize, sample_rate: usize, buffer_size: usize) !Audio {
         // initialize portaudio
         var pa_err: c.PaError = c.paNoError;
         pa_err = c.Pa_Initialize();
@@ -24,7 +23,7 @@ pub const Audio = struct {
         var stream: ?*c.PaStream = null;
 
         // pa_err = c.Pa_OpenDefaultStream(&stream, 0, channels, c.paUInt8, sample_rate, buffer_size, null, null);
-        pa_err = c.Pa_OpenDefaultStream(&stream, 0, channels, c.paFloat32, sample_rate, buffer_size, null, null);
+        pa_err = c.Pa_OpenDefaultStream(&stream, 0, @intCast(channels), c.paFloat32, @floatFromInt(sample_rate), @intCast(buffer_size), null, null);
         if (pa_err != c.paNoError) {
             std.debug.print("PortAudio error: {s}\n", .{c.Pa_GetErrorText(pa_err)});
             return error.CantOpenDefaultStream;
@@ -41,7 +40,6 @@ pub const Audio = struct {
         return .{
             .stream = stream,
             .pa_err = c.paNoError,
-            .channels = channels,
         };
     }
 
