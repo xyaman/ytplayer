@@ -18,8 +18,8 @@
             .hash = "12200abadc141099ff2ba5098f7eca9bf84d548dd92ec5827ef323d813d59b049780",
         },
         .mibu = .{
-            .url = "git+https://github.com/xyaman/mibu#ad76e0d7c66a50d7cc26e23c9dca3ebcb26a8dd5",
-            .hash = "1220ad37269abd62b8b8925a1271f0b1149bcf6e526359b74066e46c790172fc4a2c",
+            .url = "git+https://github.com/xyaman/mibu#0a803f22b1fb322a7cf3aafd6ac9631e65398da0",
+            .hash = "1220b21276e2d4567fbf2f5e8136b8c930f972859d32faefc2fddfbd928cd240df67",
         },
     },
 }

@@ -67,49 +67,53 @@ pub fn main() !void {
         const event = try mibu.events.next(stdin);
 
         switch (event) {
-            .key => |k| switch (k) {
-                .char => |v| {
+            .key => |k| {
+                if (k.char) |char| {
                     if (currfocus == .input) {
-                        try input.insertChar(@intCast(v));
-                    } else if (currfocus == .none and v == 'i') {
+                        try input.insertChar(@intCast(char));
+                    } else if (currfocus == .none and char == 'i') {
                         currfocus = .input;
                     }
 
-                    if (currfocus == .list) {
-                        switch (v) {
+                    if (currfocus == .list and !k.mods.ctrl) {
+                        switch (char) {
                             'j' => list.curr_id += 1,
                             'k' => list.curr_id -= 1,
                             else => {},
                         }
                     }
-                },
-                .backspace => _ = try input.pop(),
-                .esc => currfocus = .none,
-                .enter => {
-                    if (currfocus == .list) {
-                        try yt_stream.playFromTrack(tracks.?[@intCast(list.curr_id)]);
-                        pause = false;
-                        list.inner.clearRetainingCapacity();
-                        currfocus = .none;
-                    }
 
-                    if (currfocus == .input) {
-                        if (tracks) |t| allocator.free(t);
-                        tracks = try yt.search(allocator, input.inner.items, 20);
-                        for (tracks.?) |*t| {
-                            try list.inner.append(t.title.slice());
+                    if (k.mods.ctrl) switch (char) {
+                        'c' => should_run = false,
+                        'l' => try screen.cleanDraw(stdout.any()),
+                        'p' => pause = !pause,
+                        else => {},
+                    };
+                }
+
+                if (k.special_key != .none) switch (k.special_key) {
+                    .backspace => _ = try input.pop(),
+                    .esc => currfocus = .none,
+                    .enter => {
+                        if (currfocus == .list) {
+                            try yt_stream.playFromTrack(tracks.?[@intCast(list.curr_id)]);
+                            pause = false;
+                            list.inner.clearRetainingCapacity();
+                            currfocus = .none;
                         }
 
-                        currfocus = .list;
-                    }
-                },
-                .ctrl => |v| switch (v) {
-                    'c' => should_run = false,
-                    'l' => try screen.cleanDraw(stdout.any()),
-                    'p' => pause = !pause,
+                        if (currfocus == .input) {
+                            if (tracks) |t| allocator.free(t);
+                            tracks = try yt.search(allocator, input.inner.items, 20);
+                            for (tracks.?) |*t| {
+                                try list.inner.append(t.title.slice());
+                            }
+
+                            currfocus = .list;
+                        }
+                    },
                     else => {},
-                },
-                else => {},
+                };
             },
             else => {},
         }
