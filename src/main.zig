@@ -70,7 +70,7 @@ pub fn main() !void {
             .key => |k| {
                 if (k.char) |char| {
                     if (currfocus == .input) {
-                        try input.insertChar(@intCast(char));
+                        try input.insertChar(char);
                     } else if (currfocus == .none and char == 'i') {
                         currfocus = .input;
                     }

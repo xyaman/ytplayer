@@ -1,52 +1,80 @@
 const std = @import("std");
 const mibu = @import("mibu");
+const assert = std.debug.assert;
 
 pub const Cell = struct {
-    // unicode character (0 for continuation cells; wide chars)
-    ch: []const u8 = " ",
-    changed: bool = false,
 
-    pub fn isContinuation(self: *@This()) bool {
-        return self.ch == '0';
+    // unicode character (0 for continuation cells; wide chars)
+    // store up to 4 bytes for UTF-8 character
+    ch: []const u8 = " ",
+    is_wide: bool = false,
+
+    _inner_ch: struct { value: [4]u8, len: u3 } = .{
+        .value = [_]u8{ ' ', 0, 0, 0 },
+        .len = 1,
+    },
+
+    pub fn setCh(self: *@This(), codepoint: []const u8) void {
+        const len = @min(codepoint.len, 4);
+        @memcpy(self._inner_ch.value[0..len], codepoint[0..len]);
+        self._inner_ch.len = @intCast(len);
+        self.ch = self._inner_ch.value[0..self._inner_ch.len];
+        self.is_wide = isWideCharacter(&self._inner_ch.value, self._inner_ch.len);
     }
 
-    pub fn isWide(self: *@This()) bool {
-        // Control characters have zero width
-        if (self.ch < 0x20 or (self.ch >= 0x7F and self.ch < 0xA0)) {
-            return false;
-        }
+    pub fn isContinuation(self: @This()) bool {
+        return std.mem.eql(u8, self.ch, &[_]u8{0});
+    }
 
-        // ASCII characters are narrow
-        if (self.ch < 0x7F) {
-            return false;
-        }
-
-        // Wide character ranges (CJK, emojis, etc.)
-
-        return (self.ch >= 0x1100 and self.ch <= 0x115F) or // Hangul Jamo
-
-            (self.ch >= 0x2E80 and self.ch <= 0x2EFF) or // CJK Radicals
-            (self.ch >= 0x2F00 and self.ch <= 0x2FDF) or // Kangxi Radicals
-            (self.ch >= 0x3000 and self.ch <= 0x303F) or // CJK Symbols
-            (self.ch >= 0x3040 and self.ch <= 0x309F) or // Hiragana
-            (self.ch >= 0x30A0 and self.ch <= 0x30FF) or // Katakana
-            (self.ch >= 0x3100 and self.ch <= 0x312F) or // Bopomofo
-            (self.ch >= 0x3130 and self.ch <= 0x318F) or // Hangul Compatibility
-            (self.ch >= 0x3400 and self.ch <= 0x4DBF) or // CJK Extension A
-            (self.ch >= 0x4E00 and self.ch <= 0x9FFF) or // CJK Unified Ideographs
-
-            (self.ch >= 0xAC00 and self.ch <= 0xD7AF) or // Hangul Syllables
-            (self.ch >= 0xF900 and self.ch <= 0xFAFF) or // CJK Compatibility
-            (self.ch >= 0xFF00 and self.ch <= 0xFFEF) or // Fullwidth Forms
-            (self.ch >= 0x1F000 and self.ch <= 0x1F9FF) or // Emojis
-            (self.ch >= 0x20000 and self.ch <= 0x2A6DF) or // CJK Extension B
-            (self.ch >= 0x2A700 and self.ch <= 0x2B73F) or // CJK Extension C
-
-            (self.ch >= 0x2B740 and self.ch <= 0x2B81F) or // CJK Extension D
-            (self.ch >= 0x2B820 and self.ch <= 0x2CEAF) or // CJK Extension E
-            (self.ch >= 0x2CEB0 and self.ch <= 0x2EBEF); // CJK Extension F
+    pub fn width(self: *@This()) usize {
+        if (self.is_wide) return 2 else return 1;
     }
 };
+
+fn isWideCharacter(ch2: []const u8, len: u3) bool {
+    const ch = switch (len) {
+        1 => ch2[0],
+        2 => std.unicode.utf8Decode2(ch2[0..2].*) catch @panic("utf8Decode2"),
+        3 => std.unicode.utf8Decode3(ch2[0..3].*) catch @panic("utf8Decode3"),
+        4 => std.unicode.utf8Decode4(ch2[0..4].*) catch @panic("utf8Decode4"),
+        else => unreachable,
+    };
+
+    // Control characters have zero width
+    if (ch < 0x20 or (ch >= 0x7F and ch < 0xA0)) {
+        return false;
+    }
+
+    // ASCII characters are narrow
+    if (ch < 0x7F) {
+        return false;
+    }
+
+    // Wide character ranges (CJK, emojis, etc.)
+
+    return (ch >= 0x1100 and ch <= 0x115F) or // Hangul Jamo
+
+        (ch >= 0x2E80 and ch <= 0x2EFF) or // CJK Radicals
+        (ch >= 0x2F00 and ch <= 0x2FDF) or // Kangxi Radicals
+        (ch >= 0x3000 and ch <= 0x303F) or // CJK Symbols
+        (ch >= 0x3040 and ch <= 0x309F) or // Hiragana
+        (ch >= 0x30A0 and ch <= 0x30FF) or // Katakana
+        (ch >= 0x3100 and ch <= 0x312F) or // Bopomofo
+        (ch >= 0x3130 and ch <= 0x318F) or // Hangul Compatibility
+        (ch >= 0x3400 and ch <= 0x4DBF) or // CJK Extension A
+        (ch >= 0x4E00 and ch <= 0x9FFF) or // CJK Unified Ideographs
+
+        (ch >= 0xAC00 and ch <= 0xD7AF) or // Hangul Syllables
+        (ch >= 0xF900 and ch <= 0xFAFF) or // CJK Compatibility
+        (ch >= 0xFF00 and ch <= 0xFFEF) or // Fullwidth Forms
+        (ch >= 0x1F000 and ch <= 0x1F9FF) or // Emojis
+        (ch >= 0x20000 and ch <= 0x2A6DF) or // CJK Extension B
+        (ch >= 0x2A700 and ch <= 0x2B73F) or // CJK Extension C
+
+        (ch >= 0x2B740 and ch <= 0x2B81F) or // CJK Extension D
+        (ch >= 0x2B820 and ch <= 0x2CEAF) or // CJK Extension E
+        (ch >= 0x2CEB0 and ch <= 0x2EBEF); // CJK Extension F
+}
 
 pub const Screen = struct {
     allocator: std.mem.Allocator,
@@ -97,14 +125,43 @@ pub const Screen = struct {
     /// 0-based index
     /// Does not support wrap for the moment.
     pub fn addText(self: *@This(), sx: usize, sy: usize, text: []const u8) void {
-        var buf = self.buffers[self.curr_buffer];
+        const buf = self.buffers[self.curr_buffer];
         var utf8 = (std.unicode.Utf8View.init(text) catch unreachable).iterator();
         var x: usize = sx;
         while (utf8.nextCodepointSlice()) |codepoint| : (x += 1) {
             if (x >= self.w) break;
             if (sy * self.w + x >= buf.len) break;
-            buf[sy * self.w + x].ch = codepoint;
-            buf[sy * self.w + x].changed = true;
+
+            const len = std.unicode.utf8ByteSequenceLength(codepoint[0]) catch @panic("utf8ByteSequenceLength");
+            const is_wide = isWideCharacter(codepoint, len);
+            if (is_wide and x + 1 >= self.w) break;
+
+            // check if there is already a wide character that we need to clean
+            var cell = &buf[sy * self.w + x];
+            if (cell.*.isContinuation()) {
+                // we are trying to overwrite a continuation cell
+                // we need to clear the primary too
+                assert(x > 0);
+                const prev_cell = &buf[sy * self.w + x - 1];
+                assert(prev_cell.*.is_wide); // the previous before continuation must be always be wide
+                prev_cell.* = .{};
+            }
+
+            // If we're placing a character where a wide char starts, clear its continuation
+            if (cell.*.is_wide) {
+                assert(x + 1 < buf.len);
+                const next_cell = &buf[sy * self.w + x + 1];
+                assert(next_cell.*.isContinuation()); // the cell next to wide must be continuation
+                next_cell.* = .{};
+            }
+
+            cell.setCh(codepoint);
+            // if wide set next as continuation and advance one more cell
+            if (is_wide) {
+                const next_cell = &buf[sy * self.w + x + 1];
+                next_cell.*.setCh(&[_]u8{0});
+                x += 1;
+            }
         }
     }
 
@@ -124,8 +181,10 @@ pub const Screen = struct {
             var x: usize = 0;
             while (x < self.w) : (x += 1) {
                 const i = y * self.w + x;
-                if (buf[i].changed or !std.mem.eql(u8, buf[i].ch, prev[i].ch)) {
+                if (!std.mem.eql(u8, buf[i].ch, prev[i].ch)) {
                     try out.print("{s}", .{buf[i].ch});
+                } else {
+                    try mibu.cursor.goTo(out, x + 2, y + 1);
                 }
             }
         }
@@ -165,8 +224,10 @@ pub const InputText = struct {
         try self.inner.appendSlice(slice);
     }
 
-    pub fn insertChar(self: *@This(), c: u8) !void {
-        try self.inner.append(c);
+    pub fn insertChar(self: *@This(), c: u21) !void {
+        var buf: [4]u8 = undefined;
+        const len = try std.unicode.utf8Encode(c, &buf);
+        try self.inner.appendSlice(buf[0..len]);
     }
 
     pub fn pop(self: *@This()) !?u8 {
