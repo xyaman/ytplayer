@@ -3,12 +3,12 @@ const mibu = @import("mibu");
 const assert = std.debug.assert;
 
 pub const Cell = struct {
-
-    // unicode character (0 for continuation cells; wide chars)
-    // store up to 4 bytes for UTF-8 character
     ch: []const u8 = " ",
     is_wide: bool = false,
+    is_continuation: bool = false,
 
+    // unicode character
+    // store up to 4 bytes for UTF-8 character
     _inner_ch: struct { value: [4]u8, len: u3 } = .{
         .value = [_]u8{ ' ', 0, 0, 0 },
         .len = 1,
@@ -20,14 +20,6 @@ pub const Cell = struct {
         self._inner_ch.len = @intCast(len);
         self.ch = self._inner_ch.value[0..self._inner_ch.len];
         self.is_wide = isWideCharacter(&self._inner_ch.value, self._inner_ch.len);
-    }
-
-    pub fn isContinuation(self: @This()) bool {
-        return std.mem.eql(u8, self.ch, &[_]u8{0});
-    }
-
-    pub fn width(self: *@This()) usize {
-        if (self.is_wide) return 2 else return 1;
     }
 };
 
@@ -126,7 +118,7 @@ pub const Screen = struct {
     /// Does not support wrap for the moment.
     pub fn addText(self: *@This(), sx: usize, sy: usize, text: []const u8) void {
         const buf = self.buffers[self.curr_buffer];
-        var utf8 = (std.unicode.Utf8View.init(text) catch unreachable).iterator();
+        var utf8 = (std.unicode.Utf8View.init(text) catch |err| std.debug.panic("{}", .{err})).iterator();
         var x: usize = sx;
         while (utf8.nextCodepointSlice()) |codepoint| : (x += 1) {
             if (x >= self.w) break;
@@ -138,7 +130,7 @@ pub const Screen = struct {
 
             // check if there is already a wide character that we need to clean
             var cell = &buf[sy * self.w + x];
-            if (cell.*.isContinuation()) {
+            if (cell.*.is_continuation) {
                 // we are trying to overwrite a continuation cell
                 // we need to clear the primary too
                 assert(x > 0);
@@ -151,7 +143,7 @@ pub const Screen = struct {
             if (cell.*.is_wide) {
                 assert(x + 1 < buf.len);
                 const next_cell = &buf[sy * self.w + x + 1];
-                assert(next_cell.*.isContinuation()); // the cell next to wide must be continuation
+                assert(next_cell.*.is_continuation); // the cell next to wide must be continuation
                 next_cell.* = .{};
             }
 
@@ -159,7 +151,7 @@ pub const Screen = struct {
             // if wide set next as continuation and advance one more cell
             if (is_wide) {
                 const next_cell = &buf[sy * self.w + x + 1];
-                next_cell.*.setCh(&[_]u8{0});
+                next_cell.*.is_continuation = true;
                 x += 1;
             }
         }
