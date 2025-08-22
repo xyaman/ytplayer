@@ -6,9 +6,12 @@ const BUFFER_SIZE = 2048;
 const CHANNELS = 2;
 
 pub const TrackInfo = struct {
-    url: std.BoundedArray(u8, 64),
-    title: std.BoundedArray(u8, 256),
-    duration: std.BoundedArray(u8, 16),
+    buf1: [64]u8 = undefined,
+    buf2: [256]u8 = undefined,
+    buf3: [16]u8 = undefined,
+    url: std.ArrayListUnmanaged(u8),
+    title: std.ArrayListUnmanaged(u8),
+    duration: std.ArrayListUnmanaged(u8),
 };
 
 fn parseTrack(info: *TrackInfo, buffer: []const u8) !void {
@@ -17,15 +20,18 @@ fn parseTrack(info: *TrackInfo, buffer: []const u8) !void {
     switch (buffer[0]) {
         'I' => {
             if (buffer.len > 64) return error.TrackIndexTooLong;
-            info.url = try std.BoundedArray(u8, 64).fromSlice(buffer[1..]);
+            info.url = std.ArrayListUnmanaged(u8).initBuffer(&info.buf1);
+            try info.url.appendSliceBounded(buffer[1..]);
         },
         'T' => {
             if (buffer.len > 256) return error.TrackTitleTooLong;
-            info.title = try std.BoundedArray(u8, 256).fromSlice(buffer[1..]);
+            info.title = std.ArrayListUnmanaged(u8).initBuffer(&info.buf2);
+            try info.title.appendSliceBounded(buffer[1..]);
         },
         'D' => {
             if (buffer.len > 16) return error.TrackDurationTooLong;
-            info.duration = try std.BoundedArray(u8, 16).fromSlice(buffer[1..]);
+            info.duration = std.ArrayListUnmanaged(u8).initBuffer(&info.buf3);
+            try info.duration.appendSliceBounded(buffer[1..]);
         },
         else => {},
     }
@@ -55,12 +61,7 @@ fn getTrackInfo(allocator: std.mem.Allocator, url: []const u8) !TrackInfo {
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
-    var info = TrackInfo{
-        .url = undefined,
-        .title = undefined,
-        .duration = undefined,
-    };
-
+    var info = TrackInfo{};
     while (child.stdout.?.reader().streamUntilDelimiter(buffer.writer(), '\n', null)) {
         defer buffer.clearRetainingCapacity();
         try parseTrack(&info, buffer.items);
@@ -95,13 +96,16 @@ pub fn search(allocator: std.mem.Allocator, query: []const u8, n: usize) ![]Trac
     try child.spawn();
     defer _ = child.kill() catch {};
 
-    var buffer = std.ArrayList(u8).init(allocator);
+    var buffer = std.array_list.Managed(u8).init(allocator);
     defer buffer.deinit();
 
     var res = try allocator.alloc(TrackInfo, n);
 
+    var reader_buffer: [1024]u8 = undefined;
+    var child_reader = child.stdout.?.reader(&reader_buffer);
     var i: usize = 0;
-    while (child.stdout.?.reader().streamUntilDelimiter(buffer.writer(), '\n', null)) : (i += 1) {
+
+    while ((&child_reader.interface).takeDelimiterExclusive('\n')) |line| : (i += 1) {
         defer buffer.clearRetainingCapacity();
         var info = TrackInfo{
             .url = undefined,
@@ -110,7 +114,7 @@ pub fn search(allocator: std.mem.Allocator, query: []const u8, n: usize) ![]Trac
         };
 
         // line
-        var iter = std.mem.splitAny(u8, buffer.items, "\t");
+        var iter = std.mem.splitAny(u8, line, "\t");
         while (iter.next()) |e| {
             try parseTrack(&info, e);
         }
@@ -181,7 +185,7 @@ pub const Youtube = struct {
 
     pub fn playFromTrack(self: *@This(), track: TrackInfo) !void {
         self.current_track = track;
-        try self.play(track.url.slice());
+        try self.play(track.url.items);
     }
 
     pub fn playFromUrl(self: *@This(), url: []const u8) !void {
@@ -190,7 +194,6 @@ pub const Youtube = struct {
     }
 
     fn play(self: *@This(), url: []const u8) !void {
-
         if (self.child) |*c| {
             _ = try c.kill();
         }

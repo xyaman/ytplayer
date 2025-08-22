@@ -3,23 +3,32 @@ const mibu = @import("mibu");
 const assert = std.debug.assert;
 
 pub const Cell = struct {
+    /// UTF-8 slice representing the character to display.
+    /// Don't set this value directly, use `setCh`
     ch: []const u8 = " ",
+
+    /// `is_wide` is set automatically when `setCh` is called
     is_wide: bool = false,
+
+    /// The consumer should write this value
     is_continuation: bool = false,
 
-    // unicode character
-    // store up to 4 bytes for UTF-8 character
-    _inner_ch: struct { value: [4]u8, len: u3 } = .{
+    /// Stores up to 4 bytes for a UTF-8 character.
+    /// Read-only
+    utf8_ch: struct { value: [4]u8, len: u3 } = .{
         .value = [_]u8{ ' ', 0, 0, 0 },
         .len = 1,
     },
 
-    pub fn setCh(self: *@This(), codepoint: []const u8) void {
-        const len = @min(codepoint.len, 4);
-        @memcpy(self._inner_ch.value[0..len], codepoint[0..len]);
-        self._inner_ch.len = @intCast(len);
-        self.ch = self._inner_ch.value[0..self._inner_ch.len];
-        self.is_wide = isWideCharacter(&self._inner_ch.value, self._inner_ch.len);
+    /// Sets the cell's character from a UTF-8 codepoint slice.
+    pub inline fn setCh(self: *@This(), codepoint: []const u8) void {
+        const len = std.unicode.utf8ByteSequenceLength(codepoint[0]) catch 1;
+        const copy_len = @min(codepoint.len, len, 4);
+        @memcpy(self.utf8_ch.value[0..copy_len], codepoint[0..copy_len]);
+
+        self.ch = self.utf8_ch.value[0..self.utf8_ch.len];
+        self.is_wide = isWideCharacter(self.ch, self.utf8_ch.len);
+        self.utf8_ch.len = @intCast(copy_len);
     }
 };
 
@@ -43,7 +52,6 @@ fn isWideCharacter(ch2: []const u8, len: u3) bool {
     }
 
     // Wide character ranges (CJK, emojis, etc.)
-
     return (ch >= 0x1100 and ch <= 0x115F) or // Hangul Jamo
 
         (ch >= 0x2E80 and ch <= 0x2EFF) or // CJK Radicals
@@ -68,7 +76,7 @@ fn isWideCharacter(ch2: []const u8, len: u3) bool {
         (ch >= 0x2CEB0 and ch <= 0x2EBEF); // CJK Extension F
 }
 
-pub const Screen = struct {
+pub const Canvas = struct {
     allocator: std.mem.Allocator,
     buffers: [2][]Cell,
     curr_buffer: u2,
@@ -104,21 +112,10 @@ pub const Screen = struct {
     }
 
     /// 0-based index
-    /// TODO: change u8 to []const u8
-    pub fn add(self: *@This(), x: usize, y: usize, c: u8) void {
-        if (x < 1 or x > self.w or y < 1 or y > self.h) {
-            return;
-        }
-
-        var buf = self.buffers[self.curr_buffer];
-        buf[y * self.w + x] = c;
-    }
-
-    /// 0-based index
-    /// Does not support wrap for the moment.
-    pub fn addText(self: *@This(), sx: usize, sy: usize, text: []const u8) void {
+    /// Does not support wrap for the moment. It just stops writing if x > width
+    pub fn addText(self: *@This(), sx: usize, sy: usize, text: []const u8) !void {
         const buf = self.buffers[self.curr_buffer];
-        var utf8 = (std.unicode.Utf8View.init(text) catch |err| std.debug.panic("{}", .{err})).iterator();
+        var utf8 = (try std.unicode.Utf8View.init(text)).iterator();
         var x: usize = sx;
         while (utf8.nextCodepointSlice()) |codepoint| : (x += 1) {
             if (x >= self.w) break;
@@ -157,11 +154,7 @@ pub const Screen = struct {
         }
     }
 
-    pub fn cleanDraw(_: @This(), out: std.io.AnyWriter) !void {
-        try mibu.clear.all(out);
-    }
-
-    pub fn draw(self: *@This(), out: std.io.AnyWriter, focus: anytype) !void {
+    pub fn draw(self: *@This(), out: *std.Io.Writer, focus: anytype) !void {
         const buf = self.buffers[self.curr_buffer];
         const prev = self.buffers[1 - self.curr_buffer];
 
@@ -189,26 +182,47 @@ pub const Screen = struct {
         } else {
             try mibu.cursor.hide(out);
         }
-
-        // if (focus) |f| try f.focused(self, out)
-        // else try mibu.cursor.hide(out);
-
     }
+};
+
+pub const InputOption = struct {
+    x: usize = 0,
+    y: usize = 0,
+    width: usize = 16,
+    placeholder: []const u8 = "",
+    border: bool = false,
+    border_horizontal: []const u8 = "-",
+    border_vertical: []const u8 = "|",
+    border_corner: []const u8 = "+",
 };
 
 pub const InputText = struct {
     allocator: std.mem.Allocator,
-    inner: std.ArrayList(u8),
+    inner: std.array_list.Managed(u8),
+    placeholder: []const u8,
 
     x: usize,
     y: usize,
+    width: usize, // width of input area (excluding border)
 
-    pub fn init(allocator: std.mem.Allocator, x: usize, y: usize) @This() {
+    // Border configuration
+    border: bool = false,
+    border_horizontal: []const u8 = "-",
+    border_vertical: []const u8 = "|",
+    border_corner: []const u8 = "+",
+
+    pub fn init(allocator: std.mem.Allocator, opt: InputOption) @This() {
         return .{
             .allocator = allocator,
-            .inner = std.ArrayList(u8).init(allocator),
-            .x = x,
-            .y = y,
+            .inner = std.array_list.Managed(u8).init(allocator),
+            .placeholder = opt.placeholder,
+            .x = opt.x,
+            .y = opt.y,
+            .width = opt.width,
+            .border = opt.border,
+            .border_horizontal = opt.border_horizontal,
+            .border_vertical = opt.border_vertical,
+            .border_corner = opt.border_corner,
         };
     }
 
@@ -223,65 +237,53 @@ pub const InputText = struct {
     }
 
     pub fn pop(self: *@This()) !?u8 {
-        return self.inner.popOrNull();
+        return self.inner.pop();
     }
 
-    pub fn draw(self: @This(), screen: *Screen, _: usize, _: usize) void {
-        screen.addText(self.x, self.y, "search: ");
-        if (self.inner.items.len == 0) {
-            screen.addText(self.x, self.y + 1, "...");
-        } else {
-            screen.addText(self.x, self.y + 1, self.inner.items);
-        }
-    }
+    pub fn draw(self: @This(), screen: *Canvas, _: usize, _: usize) !void {
+        const text = if (self.inner.items.len > self.width)
+            self.inner.items[self.inner.items.len - self.width .. self.inner.items.len]
+        else
+            self.inner.items;
 
-    pub fn focused(self: *@This(), _: *Screen, out: std.io.AnyWriter) !void {
-        const x = self.x + self.inner.items.len;
-        try mibu.cursor.goTo(out, x + 1, self.y + 2);
-        try mibu.cursor.show(out);
-    }
+        if (self.border) {
+            // Top border
+            try screen.addText(self.x, self.y, self.border_corner);
+            for (0..self.width) |i| {
+                try screen.addText(self.x + 1 + i, self.y, self.border_horizontal);
+            }
+            try screen.addText(self.x + self.width + 1, self.y, self.border_corner);
 
-    pub fn deinit(self: *@This()) void {
-        self.inner.deinit();
-    }
-};
+            // Bottom border
+            try screen.addText(self.x, self.y + 2, self.border_corner);
+            for (0..self.width) |i| {
+                try screen.addText(self.x + 1 + i, self.y + 2, self.border_horizontal);
+            }
+            try screen.addText(self.x + self.width + 1, self.y + 2, self.border_corner);
 
-pub const List = struct {
-    allocator: std.mem.Allocator,
-    inner: std.ArrayList([]const u8),
-    curr_id: i16,
+            // Left and right borders
+            try screen.addText(self.x, self.y + 1, self.border_vertical);
+            try screen.addText(self.x + self.width + 1, self.y + 1, self.border_vertical);
 
-    x: usize,
-    y: usize,
-
-    pub fn init(allocator: std.mem.Allocator, x: usize, y: usize) @This() {
-        return .{
-            .allocator = allocator,
-            .inner = std.ArrayList([]const u8).init(allocator),
-            .curr_id = 0,
-            .x = x,
-            .y = y,
-        };
-    }
-
-    pub fn insertFromSlice(self: *@This(), slice: [][]const u8) !void {
-        try self.inner.appendSlice(slice);
-    }
-
-    pub fn draw(self: @This(), screen: *Screen, _: usize, _: usize) void {
-        for (self.inner.items, 0..) |it, i| {
-            if (i == self.curr_id) {
-                screen.addText(self.x, self.y + i, "> ");
-                screen.addText(self.x + 2, self.y + i, it);
+            // Input text or placeholder inside border
+            if (self.inner.items.len == 0) {
+                try screen.addText(self.x + 1, self.y + 1, self.placeholder);
             } else {
-                screen.addText(self.x, self.y + i, it);
+                try screen.addText(self.x + 1, self.y + 1, text);
+            }
+        } else {
+            if (self.inner.items.len == 0) {
+                try screen.addText(self.x, self.y + 1, self.placeholder);
+            } else {
+                try screen.addText(self.x, self.y + 1, text);
             }
         }
     }
 
-    pub fn focused(self: *@This(), _: *Screen, out: std.io.AnyWriter) !void {
-        const y = self.y + self.inner.items.len;
-        try mibu.cursor.goTo(out, self.x + 1, y + 1);
+    pub fn focused(self: *@This(), _: *Canvas, out: *std.Io.Writer) !void {
+        const x = @min(self.x + self.width, self.x + self.inner.items.len);
+
+        try mibu.cursor.goTo(out, x + 2, self.y + 2);
         try mibu.cursor.show(out);
     }
 

@@ -6,15 +6,14 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "ytplayer",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     b.installArtifact(exe);
-
-    const clap_dep = b.dependency("clap", .{});
-    exe.root_module.addImport("clap", clap_dep.module("clap"));
 
     const mibu_dep = b.dependency("mibu", .{});
     exe.root_module.addImport("mibu", mibu_dep.module("mibu"));
