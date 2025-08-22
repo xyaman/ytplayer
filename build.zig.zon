@@ -1,6 +1,7 @@
 .{
-    .name = "ytplayer",
+    .name = .ytplayer,
     .version = "0.0.1",
+    .fingerprint = 0xe7c17a2c68676b56,
     .paths = .{
         "build.zig",
         "build.zig.zon",
@@ -10,16 +11,11 @@
     },
     .dependencies = .{
         .portaudio = .{
-            .url = "git+https://github.com/allyourcodebase/portaudio#5beb53da11a9fcd01cb5f30f0375c845f0acc4be",
-            .hash = "1220e96c59de285fea5b44374713c6c0e56ce7dbd2deca72e97c6c5420865e4fad53",
-        },
-        .clap = .{
-            .url = "git+https://github.com/Hejsil/zig-clap#560c8dd72ab25d556123846254040c5bf9ad3ba4",
-            .hash = "12200abadc141099ff2ba5098f7eca9bf84d548dd92ec5827ef323d813d59b049780",
+            .path = "portaudio",
         },
         .mibu = .{
-            .url = "git+https://github.com/xyaman/mibu#0a803f22b1fb322a7cf3aafd6ac9631e65398da0",
-            .hash = "1220b21276e2d4567fbf2f5e8136b8c930f972859d32faefc2fddfbd928cd240df67",
+            .url = "git+https://github.com/xyaman/mibu#f85158e804f2a767038d44d82155c50b1de7f943",
+            .hash = "mibu-0.0.1-dev-Ddr1riGrAAC1AiDNw4p5vz7seXS_5uLrge5-y4-HWYxE",
         },
     },
 }
